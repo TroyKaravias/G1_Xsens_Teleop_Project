@@ -29,12 +29,13 @@ in the milestone. Unsupported walking and dynamic motion are not validated.
 
 ## Begin here
 
-1. Read `STATUS_AND_PLAN.md`.
-2. Read `PROJECT_FRAMEWORK.md` for the architecture and phased plan.
-3. Follow `WSL2_SETUP.md` on the Windows workstation.
-4. Run `scripts/verify_package.sh`.
-5. Run the recorded-UDP test in `RUNBOOK.md`.
-6. Only after the recorded test passes, test Windows Xsens MVN → WSL2 UDP.
+1. Read `AI_HANDOFF.md` for the current cross-machine and AI-agent context.
+2. Read `MILESTONE_2026-08-11.md` for the latest documented deployment milestone.
+3. Read `STATUS_AND_PLAN.md` and `PROJECT_FRAMEWORK.md` for the architecture and plan.
+4. Follow `WINDOWS_CONTINUATION.md` when moving development to Windows.
+5. Follow `WSL2_SETUP.md` on the Windows workstation.
+6. Run `scripts/verify_package.sh`.
+7. Run the recorded-UDP test in `RUNBOOK.md` before any live-input test.
 
 ## Package contents
 

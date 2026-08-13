@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local configuration
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+*.code-workspace
+
+# Local logs and transient outputs
+*.log
+*.pid
+
+# Hardware backups are local artifacts, not source code.
+jetson_backups/
+*.tar.gz
