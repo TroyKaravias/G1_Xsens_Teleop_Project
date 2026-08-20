@@ -27,3 +27,7 @@ jetson_backups/
 
 # Downloaded third-party robot models (fetched by pinned setup scripts).
 external/
+
+# Local Xsens source takes and captures can be large or operator-specific.
+*.mvn
+g1_xsens_handoff/data/user_recordings/

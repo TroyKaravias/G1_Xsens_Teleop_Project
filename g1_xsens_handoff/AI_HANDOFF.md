@@ -1,6 +1,6 @@
 # Durable AI and Workstation Handoff
 
-Last reviewed: 2026-08-13
+Last reviewed: 2026-08-20
 
 This file is the compact, durable context for a person or AI agent opening the
 project on another computer. It deliberately lives in Git so it does not depend
@@ -183,6 +183,75 @@ Follow `WINDOWS_CONTINUATION.md`. On a new Codex thread, use this prompt:
 
 ## Immediate handoff state
 
+- Checkpoint boundary requested on 2026-08-20: the current X2 path is live
+  Xsens semantic retargeting into bounded PD-controlled, pinned-base MuJoCo
+  dynamics. It is **not** an X2 SONIC policy, balance controller, or
+  foot-force-driven locomotion implementation. The next development task is
+  to identify and obtain a genuine X2-specific SONIC policy/runtime contract
+  (encoder, decoder/policy, observations, action/joint ordering, configuration,
+  and compatible simulator integration), then validate its provenance and
+  model compatibility before connecting the existing Xsens reference layer.
+  Do not run the G1 SONIC policy against the X2 embodiment or describe the
+  current PD simulation as SONIC.
+- On 2026-08-20, `tools/live_xsens_x2.py` added the direct simulation path
+  from MXTP02 UDP to fixed-base X2 v1.3 dynamics. It accepts live-suit and MVN
+  playback packets identically, performs streamed N-to-T calibration, reuses
+  the bounded online human reference logic, maps semantic G1-layout references
+  into 31 X2 joints, and holds the last bounded pose with zero target velocity
+  on stale input. An end-to-end loopback replay calibrated from 1,002 frames
+  and processed 253 live references with zero missing/malformed packets, stale
+  transitions, or torque saturation. This is fixed-base simulation validation,
+  not balance, locomotion, policy, or hardware validation. The immediate task
+  is operator visual review using MVN playback on UDP port 9764, then tuning
+  X2-specific live mapping based on observed motion.
+  The initial per-physics-step viewer synchronization caused slow response on
+  ordinary displays. It now advances 1 ms physics substeps to wall time,
+  renders at about 60 Hz, and refreshes transforms after restoring the pinned
+  base. A timing replay measured a 0.998x real-time factor with zero
+  saturation. The viewer also adds a non-colliding checkered floor, light
+  gradient sky, and broad ambient/head lighting; these are scene aids, not
+  ground support.
+  Live X2 calibration now appends a three-second arms-forward hold after the
+  original nine-second N/T phase. The N-to-T prompt remains unchanged at 40%
+  of that original phase (3.6 seconds with defaults). The measured forward
+  pose is used by the existing online arm-offset calibration.
+  Calibrated global pelvis yaw now rotates the entire X2 base by default while
+  its world position and base roll/pitch remain pinned. Heading is continuous,
+  gain-adjustable, and limited to 180 deg/s by default; use
+  `--no-track-global-yaw` for the previous fixed-facing view. This is global
+  orientation visualization, not free-base balance or locomotion validation.
+  Calibrated pelvis displacement also moves the pinned X2 root across world X/Y
+  by default, with a 0.75 m/s speed bound, filtering, and rejection of position
+  jumps above 0.25 m per sample. The checkered floor and viewer remain in world
+  coordinates. Use `--no-track-global-position` for centered playback. This is
+  kinematic root placement, not foot-force-driven locomotion.
+- On 2026-08-20, the first X2 fixed-base MuJoCo dynamics controller was added.
+  It uses the official model's 31 torque motors, conservative joint-group PD
+  gains, vendor torque limits, interpolated recorded references, and a
+  numerically pinned floating base. The full v1.3 recording completed at
+  0.0132 rad RMS tracking error, 0.1870 rad peak error, and zero torque
+  saturation events across 734,421 joint-steps. The v1.4 run exposed persistent
+  `head_pitch_link`/`torso_link` and `torso_link`/`waist_yaw_link`
+  self-contact, 0.5352 rad peak head error, and 16,253 head-pitch torque
+  saturations; do not hide this with higher gains.
+  Current dynamics development should use v1.3 unless actual X2 hardware is
+  confirmed as v1.4, in which case the official model contact geometry must be
+  resolved. This fixed-base result is dynamics tracking evidence, not balance,
+  locomotion, policy, or hardware validation. The immediate task is v1.3
+  continuous visual dynamics review and explicit tracking/contact acceptance
+  thresholds before any free-base controller work.
+- On 2026-08-20, X2-specific visual/retarget validation corrected an erroneous
+  elbow sign in the simulation-only adapter, added a default 4 Hz X2-only
+  joint filter, per-joint clamp diagnostics, and headless front/right snapshot
+  rendering. Both pinned variants replay all 1,167 frames. Representative
+  snapshots show coherent neutral, T-pose, arm elevation, elbow flexion, and
+  return. Clamps decreased to 1,054/36,177 on v1.3 and 951/36,177 on v1.4;
+  peak kinematic speed decreased from 10.36 to 4.35 rad/s. This is sampled
+  visual and kinematic software validation only, not continuous motion,
+  dynamics, balance, policy, or hardware validation. The immediate X2 task is
+  continuous passive-viewer inspection of remaining knee, right-shoulder-roll,
+  and v1.3 waist-pitch limits, followed by X2-specific lower-body calibration
+  and explicit acceptance thresholds.
 - On 2026-08-20, branch `agibot-x2-sim` added the first AgiBot X2 simulation
   path. It pins the official `AgibotTech/agibot_x2_urdf` assets at commit
   `77f43eb0904dae4c48ccd9154fee824f8ffd4d38`, maps calibrated Xsens/G1-layout
