@@ -39,3 +39,29 @@ display driver inside WSL2; WSL uses the Windows host driver.
 The original `g1-moves`/RoboJuDo directory is also excluded because it is approximately
 2.9 GB and is not required for the current ProtoMotions live-tracker milestone.
 
+## G1 Jetson SONIC runtime
+
+Physical operation additionally requires an operator-supplied, robot-compatible
+SONIC deployment at:
+
+```text
+/home/unitree/GR00T-WholeBodyControl/gear_sonic_deploy
+```
+
+The repository does not redistribute the compiled controller, ONNX policy
+models, Unitree SDK libraries, or vendor configuration. The global-position
+launcher currently expects:
+
+```text
+target/release/g1_deploy_onnx_ref
+policy/release/model_decoder.onnx
+policy/release/model_encoder.onnx
+policy/release/observation_config.yaml
+planner/target_vel/V2/planner_sonic.onnx
+reference/example/
+thirdparty/unitree_sdk2/thirdparty/lib/aarch64/
+```
+
+These files must be obtained through their authorized vendor/project source.
+Runtime and model sets are robot-specific: do not copy a working robot's
+vendor tree onto another G1 without confirming compatibility and licensing.
