@@ -183,6 +183,15 @@ Follow `WINDOWS_CONTINUATION.md`. On a new Codex thread, use this prompt:
 
 ## Immediate handoff state
 
+- On 2026-08-20, branch `agibot-x2-sim` added the first AgiBot X2 simulation
+  path. It pins the official `AgibotTech/agibot_x2_urdf` assets at commit
+  `77f43eb0904dae4c48ccd9154fee824f8ffd4d38`, maps calibrated Xsens/G1-layout
+  joint deltas to the X2's 31 named joints, and provides an actuator-free
+  MuJoCo replay tool. MuJoCo 3.12 loaded both official v1.3 and v1.4 models and
+  replayed the 1,167-frame recording. This is kinematic software validation,
+  not balance, policy, or hardware validation. The immediate X2 task is visual
+  joint-axis review and X2-specific filtering/tuning before dynamics or SONIC
+  embodiment work; `X2_SIMULATION.md` is the runbook.
 - On 2026-08-20, the working Jetson global-position implementation was captured
   for GitHub: `xsens_bridge/global_position.py`,
   `tools/live_xsens_global_position.py`, its regression tests, and the exact

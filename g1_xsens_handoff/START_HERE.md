@@ -46,6 +46,9 @@ in the milestone. Unsupported walking and dynamic motion are not validated.
 8. Run `scripts/verify_package.sh`.
 9. Run the recorded-UDP test in `RUNBOOK.md` before any live-input test.
 
+For the separate AgiBot X2 simulation track, follow `X2_SIMULATION.md`. That
+path is kinematic simulation only and does not reuse the G1 hardware output.
+
 ## Package contents
 
 - `xsens_bridge/`: MXTP02 parser, mapping, retargeting and watchdog code
@@ -54,3 +57,4 @@ in the milestone. Unsupported walking and dynamic motion are not validated.
 - `data/`: original XUDP recording and validated intermediate references
 - `scripts/`: verification and setup helpers
 - `EXTERNAL_FILES.md`: official dependencies not redistributed in this package
+- `X2_SIMULATION.md`: pinned official X2 models and MuJoCo replay instructions

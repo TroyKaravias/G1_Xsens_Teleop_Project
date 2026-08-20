@@ -10,6 +10,7 @@ SONIC policy models, and other vendor assets are intentionally not redistributed
 Start here:
 
 - [G1 installation and operation](g1_xsens_handoff/G1_INSTALLATION.md)
+- [AgiBot X2 simulation bring-up](g1_xsens_handoff/X2_SIMULATION.md)
 - [Current durable handoff](g1_xsens_handoff/AI_HANDOFF.md)
 - [External/vendor dependencies](g1_xsens_handoff/EXTERNAL_FILES.md)
 - [Direct Jetson runbook](g1_xsens_handoff/JETSON_DIRECT_RUNBOOK.md)

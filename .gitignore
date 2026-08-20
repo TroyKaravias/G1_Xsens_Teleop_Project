@@ -24,3 +24,6 @@ Thumbs.db
 # Hardware backups are local artifacts, not source code.
 jetson_backups/
 *.tar.gz
+
+# Downloaded third-party robot models (fetched by pinned setup scripts).
+external/
