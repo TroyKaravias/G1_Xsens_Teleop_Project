@@ -10,6 +10,12 @@ Read `MILESTONE_2026-07-29.md` for the verified state and
 `JETSON_DIRECT_RUNBOOK.md` for the preferred low-latency deployment without
 Mac or WSL SSH tunnels.
 
+The working Jetson global-position path captured on 2026-08-20 is preserved in
+`xsens_bridge/global_position.py`, `tools/live_xsens_global_position.py`, and
+the Terminal A/B launchers. New G1 installations should begin with
+`G1_INSTALLATION.md`. This capture preserves observed working software but does
+not expand the physical safety boundary.
+
 ## Safety boundary
 
 Physical use is limited to the supported, restrained test sequence documented
@@ -30,12 +36,15 @@ in the milestone. Unsupported walking and dynamic motion are not validated.
 ## Begin here
 
 1. Read `AI_HANDOFF.md` for the current cross-machine and AI-agent context.
-2. Read `MILESTONE_2026-08-11.md` for the latest documented deployment milestone.
-3. Read `STATUS_AND_PLAN.md` and `PROJECT_FRAMEWORK.md` for the architecture and plan.
-4. Follow `WINDOWS_CONTINUATION.md` when moving development to Windows.
-5. Follow `WSL2_SETUP.md` on the Windows workstation.
-6. Run `scripts/verify_package.sh`.
-7. Run the recorded-UDP test in `RUNBOOK.md` before any live-input test.
+2. For a new G1, follow `G1_INSTALLATION.md`.
+3. Read `MILESTONE_2026-08-11.md` for the latest documented deployment milestone.
+4. Read `STATUS_AND_PLAN.md` and `PROJECT_FRAMEWORK.md` for the architecture and plan.
+5. Read `GLOBAL_PELVIS_LOCOMOTION.md` before using the current experimental
+   planner-based physical launchers.
+6. Follow `WINDOWS_CONTINUATION.md` when moving development to Windows.
+7. Follow `WSL2_SETUP.md` on the Windows workstation.
+8. Run `scripts/verify_package.sh`.
+9. Run the recorded-UDP test in `RUNBOOK.md` before any live-input test.
 
 ## Package contents
 

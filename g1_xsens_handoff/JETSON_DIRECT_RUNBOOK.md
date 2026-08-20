@@ -1,5 +1,12 @@
 # Direct Jetson Deployment (No Mac or WSL Tunnel)
 
+> The raw-pose commands and keyboard controls below document the earlier
+> restrained milestone path. The launcher now defaults to the experimental
+> global-pelvis SONIC planner mode. Read `GLOBAL_PELVIS_LOCOMOTION.md` for the
+> current two-terminal commands and commissioning sequence. Use
+> `TELEOP_MODE=raw_pose` together with `SONIC_INPUT_TYPE=zmq` only when
+> deliberately reproducing this older raw-pose path.
+
 This is the preferred low-latency deployment after the restrained milestone
 test succeeded.
 

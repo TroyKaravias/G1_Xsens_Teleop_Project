@@ -2,6 +2,9 @@
 set -euo pipefail
 
 # Hybrid physical teleoperation profile:
+# - Default: global Xsens pelvis XY/yaw -> bounded SONIC planner locomotion.
+#   SONIC owns the balance-critical leg gait while Xsens tracks waist/arms.
+# - Set TELEOP_MODE=raw_pose to restore the earlier direct joint-reference path.
 # - Current Jetson-local full-body, waist, root-heading, and lifted-foot path.
 # - Earlier proven arm behavior: shoulder/elbow tracking at a conservative
 #   4 rad/s default, with wrist joints held at their neutral references.
@@ -21,6 +24,38 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
 fi
 
 cd "$HANDOFF_ROOT"
+
+TELEOP_MODE="${TELEOP_MODE:-global_pelvis}"
+if [[ "$TELEOP_MODE" == "global_pelvis" ]]; then
+  echo "GLOBAL PELVIS LOCOMOTION + XSENS UPPER BODY"
+  echo "Forward/backward/sideways: calibrated global pelvis XY"
+  echo "Facing: calibrated global pelvis yaw"
+  echo "Leg gait and balance: SONIC planner"
+  echo "Maximum initial walking speed: ${PELVIS_MAX_SPEED_MPS:-0.20} m/s"
+  echo "Requires SONIC zmq_manager, support/harness, and E-stop operator."
+  exec env PYTHONPATH=. "$PYTHON_BIN" tools/live_xsens_global_locomotion.py \
+    --bind 0.0.0.0 \
+    --xsens-port 9763 \
+    --zmq-bind tcp://127.0.0.1:5556 \
+    --calibration-seconds "${CALIBRATION_SECONDS:-15}" \
+    --stale-ms "${PELVIS_STALE_MS:-300}" \
+    --upper-max-speed "${ARM_MAX_SPEED:-4.0}" \
+    --engage-distance-m "${PELVIS_ENGAGE_DISTANCE_M:-0.08}" \
+    --release-distance-m "${PELVIS_RELEASE_DISTANCE_M:-0.04}" \
+    --position-gain "${PELVIS_POSITION_GAIN:-1.20}" \
+    --minimum-speed-mps "${PELVIS_MIN_SPEED_MPS:-0.20}" \
+    --maximum-speed-mps "${PELVIS_MAX_SPEED_MPS:-0.20}" \
+    --maximum-sample-jump-m "${PELVIS_MAX_SAMPLE_JUMP_M:-0.20}" \
+    --maximum-excursion-m "${PELVIS_MAX_EXCURSION_M:-2.0}" \
+    --heading-gain "${PELVIS_HEADING_GAIN:-1.0}" \
+    --heading-deadband-deg "${PELVIS_HEADING_DEADBAND_DEG:-3.0}" \
+    --heading-max-rate-deg-s "${PELVIS_HEADING_MAX_RATE_DEG_S:-30.0}" \
+    --torso-gain "${TORSO_GAIN:-0.50}" \
+    --waist-blend "${WAIST_BLEND:-0.25}"
+elif [[ "$TELEOP_MODE" != "raw_pose" ]]; then
+  echo "Unknown TELEOP_MODE: $TELEOP_MODE (use global_pelvis or raw_pose)" >&2
+  exit 1
+fi
 
 KICK_STABILITY="${KICK_STABILITY:-1}"
 PUBLISHER_ZMQ_BIND="tcp://127.0.0.1:5556"

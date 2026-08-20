@@ -2,6 +2,10 @@
 
 Date: 2026-08-11
 
+> Historical milestone: the default launchers changed after this milestone.
+> For the current uncommissioned global-pelvis planner path and its required
+> test order, read `AI_HANDOFF.md` and `GLOBAL_PELVIS_LOCOMOTION.md`.
+
 ## Outcome
 
 This milestone preserves the current no-tunnel Xsens-to-G1 implementation and
