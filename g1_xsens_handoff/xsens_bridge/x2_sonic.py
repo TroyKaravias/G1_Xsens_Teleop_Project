@@ -8,6 +8,7 @@ MuJoCo dynamics or balance.
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -121,14 +122,123 @@ def build_recorded_tokenizer_observation(
         previous = max(0, index - 1)
         positions.append(trajectory[index, IL_TO_MJ_DOF])
         velocities.append((trajectory[index] - trajectory[previous])[IL_TO_MJ_DOF] / frame_dt)
-    identity_6d = np.tile(np.asarray([1, 0, 0, 0, 1, 0], dtype=np.float32), (NUM_FUTURE_FRAMES, 1))
-    # The fused export expects per-frame interleaving. Grouping all positions
-    # before all velocities preserves shape and norms but permutes semantics.
-    result = np.concatenate(
-        (np.stack(positions), np.stack(velocities), identity_6d), axis=1
-    ).reshape(-1)
+    identity_6d = np.tile(np.asarray([1, 0, 0, 1, 0, 0], dtype=np.float32), (NUM_FUTURE_FRAMES, 1))
+    result = _pack_tokenizer_frames(
+        np.stack(positions), np.stack(velocities), identity_6d
+    )
     assert result.shape == (TOKENIZER_SIZE,)
     return result.astype(np.float32, copy=False)
+
+
+def build_tokenizer_from_future_frames(
+    joint_positions_mj: np.ndarray,
+    joint_velocities_mj: np.ndarray,
+    heading_6d: np.ndarray | None = None,
+) -> np.ndarray:
+    """Pack ten already-sampled future frames for the fused policy."""
+    positions = np.asarray(joint_positions_mj, dtype=np.float32)
+    velocities = np.asarray(joint_velocities_mj, dtype=np.float32)
+    expected = (NUM_FUTURE_FRAMES, NUM_DOFS)
+    if positions.shape != expected or velocities.shape != expected:
+        raise ValueError(f"future positions and velocities must have shape {expected}")
+    if heading_6d is None:
+        heading = np.tile(
+            np.asarray([1, 0, 0, 1, 0, 0], dtype=np.float32),
+            (NUM_FUTURE_FRAMES, 1),
+        )
+    else:
+        heading = np.asarray(heading_6d, dtype=np.float32)
+        if heading.shape != (NUM_FUTURE_FRAMES, 6):
+            raise ValueError("heading_6d must have shape (10, 6)")
+    packed = _pack_tokenizer_frames(
+        positions[:, IL_TO_MJ_DOF], velocities[:, IL_TO_MJ_DOF], heading
+    )
+    assert packed.shape == (TOKENIZER_SIZE,)
+    return packed
+
+
+def _pack_tokenizer_frames(
+    positions_il: np.ndarray,
+    velocities_il: np.ndarray,
+    heading_6d: np.ndarray,
+) -> np.ndarray:
+    """Reproduce the X2 training/export tokenizer layout exactly.
+
+    IsaacLab first concatenates all ten position frames and all ten velocity
+    frames into a 620-wide command, then reshapes that flat command to 10x62.
+    The six orientation values are appended to each resulting row.  Although
+    this is not conventional per-frame position/velocity interleaving, it is
+    the contract used by the released X2 policy and its reference evaluator.
+    """
+    command = np.concatenate((positions_il.reshape(-1), velocities_il.reshape(-1)))
+    command_nonflat = command.reshape(NUM_FUTURE_FRAMES, 2 * NUM_DOFS)
+    return np.concatenate((command_nonflat, heading_6d), axis=1).reshape(-1).astype(
+        np.float32, copy=False
+    )
+
+
+@dataclass(frozen=True)
+class X2SonicReferenceFrame:
+    timestamp: float
+    joint_position_mj: np.ndarray
+    joint_velocity_mj: np.ndarray
+
+
+class X2SonicDelayedReferenceBuffer:
+    """Use received history as SONIC's deterministic one-second lookahead."""
+
+    def __init__(self, delay_s: float = 1.0, capacity: int = 256) -> None:
+        if delay_s < 1.0:
+            raise ValueError("delay_s must be at least the 1.0 s SONIC horizon")
+        self.delay_s = float(delay_s)
+        self._frames: deque[X2SonicReferenceFrame] = deque(maxlen=capacity)
+
+    def push(self, frame: X2SonicReferenceFrame) -> None:
+        position = np.asarray(frame.joint_position_mj, dtype=np.float32)
+        velocity = np.asarray(frame.joint_velocity_mj, dtype=np.float32)
+        if position.shape != (NUM_DOFS,) or velocity.shape != (NUM_DOFS,):
+            raise ValueError("X2 SONIC references must contain 31 joints")
+        if self._frames and frame.timestamp <= self._frames[-1].timestamp:
+            raise ValueError("reference timestamps must increase")
+        self._frames.append(
+            X2SonicReferenceFrame(float(frame.timestamp), position.copy(), velocity.copy())
+        )
+
+    def ready(self, now: float) -> bool:
+        if len(self._frames) < 2:
+            return False
+        return self._frames[0].timestamp <= now - self.delay_s and self._frames[-1].timestamp >= now
+
+    def _sample(self, timestamp: float) -> tuple[np.ndarray, np.ndarray]:
+        if not self._frames or timestamp < self._frames[0].timestamp or timestamp > self._frames[-1].timestamp:
+            raise RuntimeError("requested reference time is outside the received buffer")
+        frames = list(self._frames)
+        for upper_index in range(1, len(frames)):
+            upper = frames[upper_index]
+            if upper.timestamp >= timestamp:
+                lower = frames[upper_index - 1]
+                span = upper.timestamp - lower.timestamp
+                fraction = 0.0 if span <= 0 else (timestamp - lower.timestamp) / span
+                position = (1.0 - fraction) * lower.joint_position_mj + fraction * upper.joint_position_mj
+                velocity = (1.0 - fraction) * lower.joint_velocity_mj + fraction * upper.joint_velocity_mj
+                return position.astype(np.float32), velocity.astype(np.float32)
+        return frames[-1].joint_position_mj.copy(), frames[-1].joint_velocity_mj.copy()
+
+    def tokenizer(self, now: float) -> np.ndarray:
+        if not self.ready(now):
+            raise RuntimeError("one-second live reference buffer is not ready")
+        base_time = now - self.delay_s
+        sampled = [self._sample(base_time + 0.1 * index) for index in range(1, 11)]
+        return build_tokenizer_from_future_frames(
+            np.stack([item[0] for item in sampled]),
+            np.stack([item[1] for item in sampled]),
+        )
+
+    def delayed_current(self, reference_end_time: float) -> tuple[np.ndarray, np.ndarray]:
+        """Return the reference at the policy's delayed current phase."""
+        if not self.ready(reference_end_time):
+            raise RuntimeError("one-second live reference buffer is not ready")
+        return self._sample(reference_end_time - self.delay_s)
 
 
 class X2SonicOnnxPolicy:
@@ -156,11 +266,16 @@ class X2SonicOnnxPolicy:
 
     def infer(self, tokenizer: np.ndarray, proprioception: np.ndarray) -> np.ndarray:
         observation = assemble_observation(tokenizer, proprioception)
+        if not np.isfinite(observation).all():
+            raise RuntimeError("X2 SONIC observation contains non-finite values")
         action = np.asarray(
             self.session.run(None, {self.input_name: observation})[0], dtype=np.float32
         )
         if action.shape != (1, ACTION_SIZE):
             raise RuntimeError(f"Unexpected X2 SONIC action shape: {action.shape}")
         if not np.isfinite(action).all():
-            raise RuntimeError("X2 SONIC produced a non-finite action")
+            maximum = float(np.max(np.abs(observation)))
+            raise RuntimeError(
+                f"X2 SONIC produced a non-finite action (max |observation|={maximum:.3f})"
+            )
         return action[0]

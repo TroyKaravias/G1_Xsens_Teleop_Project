@@ -247,3 +247,90 @@ and an older grouped tokenizer layout permuted future positions/velocities.
 The remaining blocker is reproducing the publisher's known X2 motion/RSI
 baseline exactly before evaluating an Xsens-derived reference. Do not tune
 contacts or gains to the Xsens clip until that baseline is available.
+
+### Live Xsens through the actual X2 SONIC policy
+
+The new X2-only live runner is:
+
+```bash
+PYTHONPATH=../external/x2_python_deps:. \
+python tools/live_xsens_x2_sonic.py \
+  --models ../external/agibot_x2_urdf \
+  --policy ../external/sonic_x2/x2_sonic_14000_g1.onnx \
+  --bind 0.0.0.0 --port 9764 --viewer
+```
+
+It preserves the 9-second N/T plus 3-second arms-forward calibration, converts
+the resulting motion to an X2 reference centered on SONIC's reset pose, and
+buffers one second of received frames. The policy's ten future frames are thus
+real past-received Xsens samples rather than guessed extrapolations. After the
+buffer fills, the runner builds the 680-value tokenizer reference and 990-value
+MuJoCo proprioception history, runs the fused X2 policy at 50 Hz, and drives the
+free-base simulated X2. Stale input terminates the experimental policy test.
+
+A localhost replay on 2026-08-21 exercised the complete path with the real
+9+3-second calibration: 1,371 calibration frames, 117 post-calibration Xsens
+frames, zero missing or malformed packets, and 21 actual policy steps. The
+robot then terminated on a 0.392 m pelvis-height fall with 51 torque saturation
+events. This validates live dataflow and policy execution only. It is a failed
+dynamic test and does not validate balance, tracking quality, or hardware.
+
+The first live runner revision contained two policy-input contract errors that
+explained that immediate fall. The released X2 training code concatenates all
+ten future position frames and all ten velocity frames *before* reshaping the
+command to 10x62; it does not use conventional per-frame position/velocity
+interleaving. Its 6D identity orientation is the row-major 3x2 value
+`[1, 0, 0, 1, 0, 0]`. Both paths now reproduce those layouts. Because live
+Xsens has no X2 root height, startup also places the model using its actual foot
+collision spheres instead of dropping it roughly four centimetres from the
+vendor MJCF default free-joint height.
+
+After those fixes, the saved recorded-reference runner completed 3.02 seconds
+(151 policy steps) with no fall, minimum pelvis height 0.601 m, and maximum tilt
+13.0 degrees. A longer request fell at 3.40 seconds after transitioning from
+the policy startup pose into the Xsens-derived motion. A localhost UDP replay
+through the live runner executed 28 policy steps without a fall and stopped on
+stale input when that recording ended. These are simulation observations only:
+startup is repaired, but sustained Xsens-motion tracking and X2 hardware remain
+unvalidated.
+
+A longer zero-motion control subsequently established that the step-14000
+policy falls from the static default command at 3.82 seconds even when Xsens
+deltas are zero. Thus “stands up, then falls” is currently a policy/reference
+initialization failure, not evidence that the suit retargeting caused the fall.
+The policy requires a training-distribution X2 motion anchor and matching RSI
+root pose/linear velocity/angular velocity; those artifacts are not present in
+the supplied Hugging Face files. Automatic resets, fixed-base support, or
+contact/gain tuning must not be represented as successful dynamic tracking.
+
+### Publisher quick-play baseline (v2)
+
+The current `tinkerbuggy/sonic-x2` quickstart identifies the frozen-G1-core
+LoRA v2 tracker and matching frozen-G1-core v1 planner as the latest pair. Its
+standalone `meetsitaram/sonic-x2` bundle includes known X2 motion PKLs and the
+exact RSI-aware MuJoCo evaluator. It is cloned under the ignored
+`external/sonic_x2_quickplay` directory; large policy/planner assets remain
+ignored and must not be committed.
+
+On 2026-08-21, the unmodified evaluator and required v2 runtime settings
+(parity gains, action clip 20, frozen wrists) produced:
+
+- idle: full 9.62-second clip, `motion_end`, no fall, pelvis-z MAE 0.003 m;
+- relaxed walk: 10.02-second headless rollout with no fall.
+
+This validates that v2 SONIC works dynamically with its intended X2 reference
+and RSI state. It does not validate Xsens substitution or hardware. Xsens must
+now drive the X2 planner's context/intention, while SONIC receives the
+planner-generated full 38-value future root+joint trajectory rather than a
+raw ligament mapping.
+
+`xsens_bridge/x2_planner.py` implements the planner's verified four-input ONNX
+contract, and `tools/generate_x2_planner_reference.py` creates chained 30 Hz
+root+joint references. Two 10.02-second v2 SONIC/free-base tests passed without
+falls: planner-only idle, then the same pipeline with recorded Xsens
+waist/arm/head deltas injected into each four-frame planner context. The Xsens
+case differed from planner-only idle by mean 0.257 rad and max 2.377 rad across
+upper-body joints (lower-body mean difference 0.033 rad), confirming that the
+planner responded while retaining locomotion ownership. This validates an
+offline Xsens-to-planner dynamic simulation only; live UDP remains next and no
+X2 hardware behavior was tested.

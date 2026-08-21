@@ -98,6 +98,29 @@ def load_model_with_floor(mujoco, path):
     return mujoco.MjModel.from_xml_string(xml)
 
 
+def place_x2_feet_on_floor(mujoco, model, data, clearance=0.001):
+    """Set free-base height so the X2 foot collision spheres contact the plane.
+
+    The vendor MJCF's free-joint default leaves the crouched SONIC reset pose
+    about four centimetres above the floor.  Dropping from that pose injects a
+    large unmodelled startup transient.  RSI normally supplies the matching
+    root height from the reference motion; live Xsens has no robot root state,
+    so reconstruct the missing height from the actual collision geometry.
+    """
+    mujoco.mj_forward(model, data)
+    foot_geoms = [
+        index for index in range(model.ngeom)
+        if model.geom(index).type == mujoco.mjtGeom.mjGEOM_SPHERE
+        and "ankle_roll_link" in model.body(model.geom_bodyid[index]).name
+    ]
+    if not foot_geoms:
+        raise RuntimeError("X2 model has no foot collision spheres")
+    lowest = min(float(data.geom_xpos[index, 2] - model.geom_size[index, 0])
+                 for index in foot_geoms)
+    data.qpos[2] += float(clearance) - lowest
+    mujoco.mj_forward(model, data)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("csv", type=Path)
@@ -135,13 +158,17 @@ def main():
     # Direct-retarget coordinates are centered on the visual T-pose. SONIC was
     # trained around its crouched X2 reset pose, so retain calibrated motion
     # deltas while changing the absolute reference center.
-    trajectory = default + (trajectory - trajectory[calibration_frame])
+    # Calibration frames establish the reference origin; they are not motion
+    # commands and must not be replayed to the policy after initialization.
+    trajectory = default + (
+        trajectory[calibration_frame:] - trajectory[calibration_frame]
+    )
     trajectory, clamp_count = clamp_x2_trajectory(trajectory, model.jnt_range[joint_ids])
     trajectory = prepend_policy_startup(trajectory, default, frame_dt)
 
     mujoco.mj_resetData(model, data)
     data.qpos[qpos_adr] = default
-    mujoco.mj_forward(model, data)
+    place_x2_feet_on_floor(mujoco, model, data)
     last_action_mj = np.zeros(31, dtype=np.float32)
     falls = 0; saturation_events = 0; steps = 0
     minimum_height = float(data.qpos[2]); maximum_tilt = 0.0

@@ -4,10 +4,13 @@ import pytest
 from xsens_bridge.x2_sonic import (
     ACTION_SIZE,
     HISTORY_LENGTH,
+    IL_TO_MJ_DOF,
     OBSERVATION_SIZE,
     PROPRIOCEPTION_SIZE,
     TOKENIZER_SIZE,
     X2SonicProprioceptionBuffer,
+    X2SonicDelayedReferenceBuffer,
+    X2SonicReferenceFrame,
     assemble_observation,
     build_recorded_tokenizer_observation,
 )
@@ -51,11 +54,28 @@ def test_assemble_rejects_wrong_dimensions():
         assemble_observation(np.zeros(679), np.zeros(PROPRIOCEPTION_SIZE))
 
 
-def test_tokenizer_is_interleaved_per_future_frame():
+def test_tokenizer_matches_x2_training_group_then_reshape_layout():
     trajectory = np.stack([np.arange(31) + frame * 100 for frame in range(20)])
     tokenizer = build_recorded_tokenizer_observation(trajectory, 0.1, 0.0)
-    first = tokenizer[:68]
-    # First future frame is trajectory[1], in IsaacLab gather order.
-    assert first[0] == trajectory[1, 0]
-    assert first[31] == 1000.0  # velocity of MJ joint 0: (100 - 0) / 0.1
-    np.testing.assert_array_equal(first[62:], [1, 0, 0, 0, 1, 0])
+    rows = tokenizer.reshape(10, 68)
+    positions = np.stack([trajectory[index] for index in range(1, 11)])[:, IL_TO_MJ_DOF]
+    velocities = np.full((10, 31), 1000.0)[:, IL_TO_MJ_DOF]
+    expected_command = np.concatenate((positions.reshape(-1), velocities.reshape(-1)))
+    np.testing.assert_array_equal(rows[:, :62].reshape(-1), expected_command)
+    np.testing.assert_array_equal(rows[:, 62:], np.tile([1, 0, 0, 1, 0, 0], (10, 1)))
+
+
+def test_delayed_live_buffer_uses_received_frames_as_future():
+    buffer = X2SonicDelayedReferenceBuffer(delay_s=1.0)
+    for index in range(51):
+        timestamp = index * 0.02
+        values = np.full(31, timestamp, dtype=np.float32)
+        buffer.push(X2SonicReferenceFrame(timestamp, values, np.ones(31)))
+    assert buffer.ready(1.0)
+    tokenizer = buffer.tokenizer(1.0).reshape(10, 68)
+    # With a 1 s delay, the policy's +0.1 ... +1.0 s references are
+    # received samples at 0.1 ... 1.0 s.
+    command = tokenizer[:, :62].reshape(-1)
+    expected_positions = np.repeat(np.arange(0.1, 1.01, 0.1), 31)
+    np.testing.assert_allclose(command[:310], expected_positions, atol=1e-6)
+    np.testing.assert_allclose(command[310:], 1.0)
