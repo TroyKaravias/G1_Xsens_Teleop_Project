@@ -403,22 +403,3 @@ ONNX model produces 31 actions at 50 Hz, and PD torques drive the free-base X2.
 It is not direct MuJoCo `qpos` replay. A focused unit test verifies the yaw
 target's row-major 6D rotation layout; visually validating the operator's MVN
 turns is still required.
-
-### Xsens pelvis intent through the X2 planner
-
-The experimental `--no-stationary` capture path now converts Xsens world XY
-into the calibrated pelvis frame and unwraps pelvis yaw. Per planner chunk it
-derives bounded planar velocity and yaw rate, selects idle/slow-walk/walk, and
-feeds the planner's empirically verified velocity contract:
-`[yaw_rate, velocity_x, velocity_y, velocity_z]`. The prior experimental order
-mistook yaw rate for facing-X and therefore commanded continuous spinning; do
-not restore it.
-
-A localhost replay captured 943 post-calibration frames and generated an
-11.30-second reference. The corrected reference moved 0.229 m / -0.200 m in
-XY, had -2.3 degrees net heading change, and no longer accumulated the false
-612-degree turn produced by the incorrect contract. Under v2 SONIC it remained
-upright for 10.60 seconds, then failed the pelvis-height threshold at 0.395 m.
-This validates intent extraction, planner invocation, and removal of the spin
-bug, but it is a **failed full-duration dynamic test**. Inspect the final
-planner transition and contacts before calling planner locomotion stable.

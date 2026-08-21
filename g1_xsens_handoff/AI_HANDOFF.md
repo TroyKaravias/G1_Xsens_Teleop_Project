@@ -497,16 +497,3 @@ tests plus the separately permitted UDP test pass. Actual visual turning with
 the operator's MVN playback is the immediate next validation. This is
 simulation software validation only, not X2 hardware or completed
 motion-quality validation.
-
-The next X2 planner-intent iteration converts recorded/live Xsens pelvis XY to
-the calibrated pelvis frame, unwraps heading, and sends bounded yaw-rate plus
-planar velocity to the planner. Empirical basis tests established the actual
-four-value order as `[yaw_rate, velocity_x, velocity_y, velocity_z]`; treating
-the first and fourth values as a facing vector caused a false continuous spin.
-A 943-frame localhost replay produced an 11.30-second planned reference with
-0.229/-0.200 m XY displacement and -2.3 degrees net heading instead of the
-erroneous 612-degree accumulated turn. V2 SONIC stayed upright until 10.60 s,
-then failed at pelvis z=0.395 m. Therefore the data/intent correction is
-validated, but full-duration planner-driven dynamics are not. Immediate task:
-inspect and repair the late planner/contact transition, then visually validate
-walking, turning, and stopping against the operator's MVN playback.
