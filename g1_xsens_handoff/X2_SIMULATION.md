@@ -192,3 +192,58 @@ The next acceptance sequence is:
    it in simulation on a larger GPU system.
 5. Only after simulation acceptance, design a separate fail-closed X2 hardware
    adapter and supported commissioning runbook.
+
+## 6. X2 SONIC integration (primary development path)
+
+The direct live runner above remains a calibration and kinematic-reference
+diagnostic. It must not be presented as SONIC. The primary controller path is
+now the X2 Ultra embodiment developed in NVlabs/GR00T-WholeBodyControl PR #112.
+Fetch its source at the reviewed commit into the ignored `external/` tree:
+
+```bash
+./scripts/fetch_x2_sonic_source.sh
+```
+
+That source contains the 31-DoF embodiment, training configuration, joint-order
+converters, and `gear_sonic/scripts/eval_x2_mujoco.py`. The selected fused
+policy is `tinkerbuggy/sonic-x2` file
+`sonic_policy/x2_sonic_policy.onnx`. It is intentionally kept under the ignored
+`external/sonic_x2/` directory because its weights license is pending review.
+Check the local policy, and optionally a known X2 motion, before evaluation:
+
+```bash
+./scripts/check_x2_sonic_assets.sh \
+  ../external/sonic_x2/x2_sonic_policy.onnx \
+  /path/to/x2_motion.pkl  # optional until known-motion evaluation
+```
+
+The evaluator contract is 50 Hz control, 31 policy actions, ten frames of
+proprioceptive history, and ten future reference frames. Live Xsens integration
+therefore belongs upstream of the SONIC encoder as a buffered X2 motion
+reference. It must not publish Xsens-derived joint targets directly to the
+actuators. First validate the supplied checkpoint and known X2 motion in
+IsaacLab, then in free-base MuJoCo. Only after those two baselines pass should
+the saved-MVN and live-UDP reference providers be connected.
+
+The fused X2 ONNX is present locally and its SHA-256 matches the Hugging Face
+manifest (`e7ccd6522010ea660facfb7265fb129dac2b580dd1483cc1dbada73c205309d7`).
+This establishes file identity only—not inference, dynamic simulation, or
+hardware validation. Never substitute the released G1 checkpoint: its
+observation/action embodiment is incompatible.
+
+`tools/simulate_xsens_x2_sonic.py` is the first free-base recorded-reference
+integration. It constructs the fused 1670-float observation, runs the actual
+ONNX policy at 50 Hz, converts its 31 IsaacLab-order actions to MuJoCo order,
+and applies the embodiment PD/action scales. It also adds a physical plane at
+runtime because the pinned official v1.3 MJCF contains no floor; the vendor
+asset itself remains unchanged.
+
+The first controlled runs are **failures**, not dynamic validation. The generic
+fused policy fell at 0.50 s after the floor and per-frame tokenizer-layout fixes;
+the versioned step-14,000 policy (MD5
+`ec745672cfefd9507e9d5e9834bf4537`) fell at 0.36 s. These runs exposed and
+corrected two false leads: initially the robot fell through the missing floor,
+and an older grouped tokenizer layout permuted future positions/velocities.
+The remaining blocker is reproducing the publisher's known X2 motion/RSI
+baseline exactly before evaluating an Xsens-derived reference. Do not tune
+contacts or gains to the Xsens clip until that baseline is available.

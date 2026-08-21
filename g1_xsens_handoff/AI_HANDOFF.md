@@ -193,6 +193,43 @@ Follow `WINDOWS_CONTINUATION.md`. On a new Codex thread, use this prompt:
   model compatibility before connecting the existing Xsens reference layer.
   Do not run the G1 SONIC policy against the X2 embodiment or describe the
   current PD simulation as SONIC.
+- On 2026-08-20, the operator selected X2 SONIC as the primary X2 development
+  architecture. The published Sonic AgiBot X2 Port demonstrates that trained
+  X2 Ultra policies exist and reports IsaacLab, MuJoCo, and gantry-supported
+  hardware runs, but its project page and paper do not publish the canonical
+  checkpoint. NVlabs/GR00T-WholeBodyControl PR #112 supplies the experimental
+  31-DoF embodiment, training configuration, order converters, and X2 MuJoCo
+  evaluator. `scripts/fetch_x2_sonic_source.sh` pins that external source at
+  commit `489d6dffc6e327b2e28f995d21e26ab300227ada`; it remains ignored and
+  separate from the preserved G1 code. `scripts/check_x2_sonic_assets.sh`
+  validates the selected fused `.onnx` policy and optional X2-retargeted `.pkl`
+  reference. The operator supplied `tinkerbuggy/sonic-x2`; its 58,505,722-byte
+  `sonic_policy/x2_sonic_policy.onnx` is stored locally under ignored
+  `external/sonic_x2/` and matches the Hugging Face manifest SHA-256
+  `e7ccd6522010ea660facfb7265fb129dac2b580dd1483cc1dbada73c205309d7`.
+  The model card declares a 1670-float actor observation and 31-float X2 action,
+  but its weights license is still pending review/all-rights-reserved. File
+  identity and CPU ONNX inference are verified: ONNX Runtime 1.23.2 reports
+  one `obs[batch,1670]` float input and one `action[batch,31]` float output;
+  a synthetic finite observation produced a finite 31-action result.
+  `xsens_bridge/x2_sonic.py` now enforces the 680-tokenizer + 990-proprioception
+  ordering and IsaacLab-compatible ten-frame, term-major history; four focused
+  tests pass. This is graph-contract validation only, not meaningful motion,
+  dynamic simulation, or hardware validation. Immediate next task: reproduce
+  a known-motion baseline in free-base MuJoCo, then replace the
+  motion-file provider with a buffered live-Xsens reference provider. Do not
+  substitute the public G1 checkpoint or call the existing PD runner SONIC.
+  The first free-base ONNX integration now exists as
+  `tools/simulate_xsens_x2_sonic.py`. It identified that the official v1.3
+  MJCF has no floor and adds a colliding plane at runtime without editing the
+  vendor asset. It also uses per-future-frame tokenizer layout
+  `[31 q, 31 qd, 6D heading]`; the older grouped reshape was rejected because
+  it permutes policy semantics. Neither available fused policy currently
+  survives the synthetic SONIC-default/Xsens-delta startup: the generic graph
+  fell at 0.50 s and the checksum-verified step-14,000 graph fell at 0.36 s.
+  Treat these as failed dynamic tests. Immediate blocker: obtain or reconstruct
+  one known training-distribution X2 motion PKL plus its RSI frame and reproduce
+  the publisher baseline before diagnosing the live Xsens reference layer.
 - On 2026-08-20, `tools/live_xsens_x2.py` added the direct simulation path
   from MXTP02 UDP to fixed-base X2 v1.3 dynamics. It accepts live-suit and MVN
   playback packets identically, performs streamed N-to-T calibration, reuses
