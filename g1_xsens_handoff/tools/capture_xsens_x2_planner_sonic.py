@@ -22,8 +22,8 @@ from tools.live_xsens_x2 import capture_calibration
 from xsens_bridge.live_retarget import OnlineG1Retargeter
 from xsens_bridge.stream import LatestPoseReceiver
 from xsens_bridge.x2_planner import (
-    X2KinematicPlanner, clamp_planner_joints, pack_mujoco_qpos,
-    unpack_mujoco_qpos,
+    X2KinematicPlanner, calibrated_planar_pelvis, clamp_planner_joints,
+    pack_mujoco_qpos, pack_velocity_intent, unpack_mujoco_qpos,
 )
 from xsens_bridge.x2_retarget import g1_deltas_to_x2
 
@@ -73,6 +73,14 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument(
+        "--maximum-planner-speed", type=float, default=0.8,
+        help="simulation-only ceiling for calibrated Xsens planar intent (m/s)",
+    )
+    parser.add_argument(
+        "--maximum-planner-yaw-rate", type=float, default=1.0,
+        help="simulation-only ceiling for calibrated Xsens turning intent (rad/s)",
+    )
+    parser.add_argument(
         "--stationary", action=argparse.BooleanOptionalAction, default=True,
         help="hold validated idle root/legs and apply Xsens only above the hips",
     )
@@ -86,9 +94,11 @@ def main() -> None:
         parser.error("calibration durations must be positive")
     if args.capture_seconds < 0 or args.motion_start_delay < 0:
         parser.error("capture duration and motion start delay must be non-negative")
+    if min(args.maximum_planner_speed, args.maximum_planner_yaw_rate) <= 0:
+        parser.error("planner speed and yaw-rate limits must be positive")
 
     stale_s = args.stale_ms / 1000.0
-    samples: list[tuple[float, np.ndarray, np.ndarray]] = []
+    samples: list[tuple[float, np.ndarray, np.ndarray, np.ndarray]] = []
     with LatestPoseReceiver(args.bind, args.port, counter_reset_after_seconds=stale_s) as receiver:
         log.info("X2 SIMULATION ONLY: waiting for MVN playback/live suit on %s:%d", args.bind, args.port)
         calibration = capture_calibration(
@@ -123,11 +133,16 @@ def main() -> None:
                         # this from an idle-template origin and later adding it
                         # to the planner's hands-behind-back pose changes the
                         # semantics (e.g. punches become salute-like gestures).
-                        pelvis_position = np.asarray(next(
-                            segment.position_m for segment in latest.frame.segments
+                        pelvis = next(
+                            segment for segment in latest.frame.segments
                             if segment.name == "pelvis"
-                        ), dtype=np.float32)
-                        samples.append((latest.received_at, direct.astype(np.float32), pelvis_position))
+                        )
+                        samples.append((
+                            latest.received_at,
+                            direct.astype(np.float32),
+                            np.asarray(pelvis.position_m, dtype=np.float32),
+                            np.asarray(pelvis.quaternion_wxyz, dtype=np.float32),
+                        ))
                     last_counter = counter
             elif latest is not None and now - last_fresh > stale_s:
                 log.warning("Xsens stream ended/stale; planning from %d captured frames", len(samples))
@@ -140,12 +155,16 @@ def main() -> None:
     timestamps -= timestamps[0]
     positions = np.stack([item[1] for item in samples])
     pelvis_positions = np.stack([item[2] for item in samples])
-    pelvis_positions -= pelvis_positions[0]
+    pelvis_quaternions = np.stack([item[3] for item in samples])
+    calibrated_pelvis, pelvis_heading = calibrated_planar_pelvis(
+        pelvis_positions, pelvis_quaternions,
+    )
     duration = max(4 / 30.0, float(timestamps[-1]))
     frames = max(4, int(np.floor(duration * 30.0)) + 1)
     sample_times = np.arange(frames, dtype=np.float64) / 30.0
     xsens_positions = _sample_deltas(timestamps, positions, sample_times)
-    sampled_pelvis = _sample_deltas(timestamps, pelvis_positions, sample_times)
+    sampled_pelvis = _sample_deltas(timestamps, calibrated_pelvis, sample_times)
+    sampled_heading = np.interp(sample_times, timestamps, pelvis_heading).astype(np.float32)
     if args.auto_trim_quiet and len(xsens_positions) > 60:
         upper_speed = np.linalg.norm(
             np.diff(xsens_positions[:, 12:], axis=0), axis=1
@@ -162,6 +181,7 @@ def main() -> None:
                 )
                 xsens_positions = xsens_positions[trim_start:]
                 sampled_pelvis = sampled_pelvis[trim_start:]
+                sampled_heading = sampled_heading[trim_start:]
                 frames = len(xsens_positions)
     xsens_deltas = xsens_positions - xsens_positions[0]
 
@@ -193,7 +213,6 @@ def main() -> None:
         planner = X2KinematicPlanner(args.planner)
         chunks = []
         previous_delta = np.zeros((4, 19), dtype=np.float32)
-        previous_facing = np.asarray([1.0, 0.0], dtype=np.float32)
         while sum(len(chunk) for chunk in chunks) < frames:
             start = sum(len(chunk) for chunk in chunks)
             indices = np.minimum(start + np.arange(4), frames - 1)
@@ -204,18 +223,22 @@ def main() -> None:
             span_s = max((stop - start) / 30.0, 1.0 / 30.0)
             velocity_xy = (sampled_pelvis[stop, :2] - sampled_pelvis[start, :2]) / span_s
             speed = float(np.linalg.norm(velocity_xy))
-            if speed > 0.8:
-                velocity_xy *= 0.8 / speed
-                speed = 0.8
-            if speed > 0.05:
-                previous_facing = velocity_xy / speed
-            mode = args.mode if args.mode >= 0 else (0 if speed < 0.05 else 1 if speed < 0.35 else 2)
-            velocity_intent = np.asarray([
-                previous_facing[0], velocity_xy[0], velocity_xy[1], previous_facing[1]
-            ], dtype=np.float32)
+            yaw_rate = float(sampled_heading[stop] - sampled_heading[start]) / span_s
+            active = speed >= 0.05 or abs(yaw_rate) >= np.radians(5.0)
+            mode = args.mode if args.mode >= 0 else (
+                0 if not active else 1 if speed < 0.35 else 2
+            )
+            velocity_intent = pack_velocity_intent(
+                velocity_xy,
+                yaw_rate,
+                maximum_speed_mps=args.maximum_planner_speed,
+                maximum_yaw_rate_rad_s=args.maximum_planner_yaw_rate,
+            )
             log.info(
-                "Planner chunk %d: mode=%d speed=%.2f m/s velocity=(%.2f, %.2f)",
-                len(chunks), mode, speed, velocity_xy[0], velocity_xy[1],
+                "Planner chunk %d: mode=%d speed=%.2f m/s velocity=(%.2f, %.2f) yaw_rate=%.1f deg/s",
+                len(chunks), mode, min(speed, args.maximum_planner_speed),
+                velocity_intent[1], velocity_intent[2],
+                np.degrees(velocity_intent[0]),
             )
             prediction = planner.generate(
                 context, velocity_intent=velocity_intent, mode=mode,
