@@ -79,3 +79,25 @@ def test_delayed_live_buffer_uses_received_frames_as_future():
     expected_positions = np.repeat(np.arange(0.1, 1.01, 0.1), 31)
     np.testing.assert_allclose(command[:310], expected_positions, atol=1e-6)
     np.testing.assert_allclose(command[310:], 1.0)
+
+
+def test_delayed_live_buffer_expresses_xsens_heading_relative_to_robot():
+    buffer = X2SonicDelayedReferenceBuffer(delay_s=1.0)
+    target_yaw = 0.5
+    for index in range(51):
+        timestamp = index * 0.02
+        buffer.push(X2SonicReferenceFrame(
+            timestamp,
+            np.zeros(31, dtype=np.float32),
+            np.zeros(31, dtype=np.float32),
+            target_yaw,
+        ))
+
+    rows = buffer.tokenizer(1.0, current_yaw=0.2).reshape(10, 68)
+    relative_yaw = target_yaw - 0.2
+    expected = np.tile([
+        np.cos(relative_yaw), -np.sin(relative_yaw),
+        np.sin(relative_yaw), np.cos(relative_yaw),
+        0.0, 0.0,
+    ], (10, 1))
+    np.testing.assert_allclose(rows[:, 62:], expected, atol=1e-6)

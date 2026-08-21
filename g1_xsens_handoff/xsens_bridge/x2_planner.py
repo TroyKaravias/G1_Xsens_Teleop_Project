@@ -12,6 +12,17 @@ CONTEXT_FRAMES = 4
 MAX_PREDICTION_FRAMES = 64
 
 
+def clamp_planner_joints(qpos: np.ndarray, joint_ranges_mj: np.ndarray) -> tuple[np.ndarray, int]:
+    """Clamp the 31 joint fields of full planner qpos to the X2 MJCF limits."""
+    values = np.asarray(qpos, dtype=np.float32).copy()
+    limits = np.asarray(joint_ranges_mj, dtype=np.float32)
+    if values.ndim != 2 or values.shape[1] != QPOS_SIZE or limits.shape != (31, 2):
+        raise ValueError("expected planner qpos (frames,38) and X2 limits (31,2)")
+    before = values[:, 7:].copy()
+    values[:, 7:] = np.clip(values[:, 7:], limits[:, 0], limits[:, 1])
+    return values, int(np.count_nonzero(before != values[:, 7:]))
+
+
 def pack_mujoco_qpos(
     root_position: np.ndarray,
     root_quaternion_xyzw: np.ndarray,

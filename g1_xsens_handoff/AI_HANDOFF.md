@@ -292,6 +292,58 @@ Follow `WINDOWS_CONTINUATION.md`. On a new Codex thread, use this prompt:
   yet live UDP and not hardware validation. Immediate task: convert this exact
   planner-context path to the calibrated live MXTP02 stream without reverting
   to direct SONIC joint-reference mapping.
+- `tools/capture_xsens_x2_planner_sonic.py` now accepts either MVN recording
+  playback or a live suit as MXTP02 UDP on port 9764, runs the unchanged 9 s
+  N/T + 3 s arms-forward calibration, captures post-calibration motion, plans
+  a full X2 root+joint reference, and optionally opens the v2 SONIC evaluator.
+  Localhost replay captured 401 post-calibration frames, generated 4.93 s of
+  X2 motion, and completed the 4.92-second free-base SONIC rollout without a
+  fall. This validates capture-then-plan playback dynamics, not continuous
+  real-time replanning and not hardware. Immediate task: make replanning
+  continuous while retaining the same planner context and safety contracts.
+- The first capture tool only perturbed four planner context frames, allowing
+  mode 0 to resume its learned template (observed by the operator as a salute)
+  instead of following MVN. This is fixed: planner output owns root and the 12
+  lower-body joints, while calibrated Xsens waist/arm/head values replace all
+  19 upper-body reference joints at every 30 Hz frame before v2 SONIC. The
+  corrected CSV path survived 10.02 s, and a fresh localhost UDP capture (402
+  Xsens frames, 4.90 s reference) survived its complete 4.92 s free-base
+  rollout without a fall. Headless dynamics verify survival, not visual
+  correspondence; operator visual review is next. Wrists remain frozen because
+  that is a required v2 runtime safety setting.
+- Operator visual review rejected that result: the generated reference showed
+  non-punch arm poses. Diagnosis separated kinematics from dynamics. The saved
+  10-second reference exceeded X2 elbow limits (down to -3.25 rad versus the
+  -2.356 rad MJCF limit), used planner-idle-relative deltas instead of absolute
+  calibrated X2 poses, and truncated capture at exactly 10 seconds. The capture
+  tool now uses absolute retargeted upper-body poses on every frame, clamps all
+  31 joints to the quick-play MJCF, defaults to capture-until-stream-end, and
+  supports `--motion-start-delay`. SONIC tracked a corrected 10.04-second
+  reference at joint MAE 0.101 rad without falling, proving tracker response;
+  this does **not** prove the operator's punch clip was captured. Immediate
+  acceptance gate: kinematically inspect the full newly captured reference and
+  confirm the punch sequence before judging SONIC dynamics.
+- Operator clarified that the desired mode is stationary X2 response, matching
+  the earlier direct preview but with SONIC as the physics controller. The
+  capture tool now defaults to `--stationary`: it bypasses generative planner
+  motion, holds world XY and the validated idle root/12 leg reference, replaces
+  all 19 waist/arm/head reference values with absolute calibrated Xsens poses,
+  then lets v2 SONIC produce actions. A 10.04-second stationary composite
+  completed on `motion_end` without a fall (joint MAE 0.0986 rad, pelvis-z MAE
+  0.005 m). This validates stationary dynamic tracking of that generated
+  reference, not visual punch correspondence or hardware. `--no-stationary`
+  retains experimental planner locomotion but is not the desired default.
+- User clarified the required execution is continuous MVN network playback,
+  not capture-then-generate-then-view. `tools/live_xsens_x2_sonic.py` now uses
+  the validated v2 tracker and idle RSI directly after the unchanged 9+3 s
+  calibration, consumes each arriving MXTP02 frame, maintains a one-second
+  received-frame lookahead, and updates free-base MuJoCo at 50 Hz while MVN is
+  still playing. A localhost stream processed 766 frames / 427 policy steps
+  with zero loss, malformed packets, torque saturation, or fall, stopping only
+  on stale playback. `--track-xsens-legs` applies calibrated leg deltas around
+  stable idle legs for walking clips; an 8-second full-body stream completed
+  400 policy steps with no fall or saturation. These are headless continuous
+  simulation tests, not visual correspondence or hardware validation.
 - On 2026-08-20, `tools/live_xsens_x2.py` added the direct simulation path
   from MXTP02 UDP to fixed-base X2 v1.3 dynamics. It accepts live-suit and MVN
   playback packets identically, performs streamed N-to-T calibration, reuses
@@ -433,3 +485,15 @@ Follow `WINDOWS_CONTINUATION.md`. On a new Codex thread, use this prompt:
   are not physical validation.
 
 Update this section whenever that next task or verification status changes.
+
+On 2026-08-21, the continuous X2 MXTP02 runner was extended to pass calibrated,
+unwrapped Xsens pelvis yaw into the published v2 SONIC policy as a root-heading
+target relative to the simulated robot heading. Its MuJoCo viewer now uses a
+fixed world camera so world translation and turns remain visible. The path is
+genuine SONIC inference (680 reference values + 990 proprioception values, 31
+policy actions at 50 Hz, applied through PD torques), not direct `qpos`
+animation. The 6D yaw representation has a focused unit test; 129 unrestricted
+tests plus the separately permitted UDP test pass. Actual visual turning with
+the operator's MVN playback is the immediate next validation. This is
+simulation software validation only, not X2 hardware or completed
+motion-quality validation.

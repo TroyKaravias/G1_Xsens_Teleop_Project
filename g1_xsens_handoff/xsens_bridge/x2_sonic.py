@@ -182,6 +182,7 @@ class X2SonicReferenceFrame:
     timestamp: float
     joint_position_mj: np.ndarray
     joint_velocity_mj: np.ndarray
+    target_yaw: float = 0.0
 
 
 class X2SonicDelayedReferenceBuffer:
@@ -201,7 +202,10 @@ class X2SonicDelayedReferenceBuffer:
         if self._frames and frame.timestamp <= self._frames[-1].timestamp:
             raise ValueError("reference timestamps must increase")
         self._frames.append(
-            X2SonicReferenceFrame(float(frame.timestamp), position.copy(), velocity.copy())
+            X2SonicReferenceFrame(
+                float(frame.timestamp), position.copy(), velocity.copy(),
+                float(frame.target_yaw),
+            )
         )
 
     def ready(self, now: float) -> bool:
@@ -209,7 +213,7 @@ class X2SonicDelayedReferenceBuffer:
             return False
         return self._frames[0].timestamp <= now - self.delay_s and self._frames[-1].timestamp >= now
 
-    def _sample(self, timestamp: float) -> tuple[np.ndarray, np.ndarray]:
+    def _sample(self, timestamp: float) -> tuple[np.ndarray, np.ndarray, float]:
         if not self._frames or timestamp < self._frames[0].timestamp or timestamp > self._frames[-1].timestamp:
             raise RuntimeError("requested reference time is outside the received buffer")
         frames = list(self._frames)
@@ -221,24 +225,34 @@ class X2SonicDelayedReferenceBuffer:
                 fraction = 0.0 if span <= 0 else (timestamp - lower.timestamp) / span
                 position = (1.0 - fraction) * lower.joint_position_mj + fraction * upper.joint_position_mj
                 velocity = (1.0 - fraction) * lower.joint_velocity_mj + fraction * upper.joint_velocity_mj
-                return position.astype(np.float32), velocity.astype(np.float32)
-        return frames[-1].joint_position_mj.copy(), frames[-1].joint_velocity_mj.copy()
+                yaw = (1.0 - fraction) * lower.target_yaw + fraction * upper.target_yaw
+                return position.astype(np.float32), velocity.astype(np.float32), float(yaw)
+        last = frames[-1]
+        return last.joint_position_mj.copy(), last.joint_velocity_mj.copy(), last.target_yaw
 
-    def tokenizer(self, now: float) -> np.ndarray:
+    def tokenizer(self, now: float, current_yaw: float = 0.0) -> np.ndarray:
         if not self.ready(now):
             raise RuntimeError("one-second live reference buffer is not ready")
         base_time = now - self.delay_s
         sampled = [self._sample(base_time + 0.1 * index) for index in range(1, 11)]
+        relative_yaw = np.asarray([item[2] - current_yaw for item in sampled])
+        cosine = np.cos(relative_yaw)
+        sine = np.sin(relative_yaw)
+        heading = np.stack(
+            (cosine, -sine, sine, cosine, np.zeros(10), np.zeros(10)), axis=1
+        ).astype(np.float32)
         return build_tokenizer_from_future_frames(
             np.stack([item[0] for item in sampled]),
             np.stack([item[1] for item in sampled]),
+            heading,
         )
 
     def delayed_current(self, reference_end_time: float) -> tuple[np.ndarray, np.ndarray]:
         """Return the reference at the policy's delayed current phase."""
         if not self.ready(reference_end_time):
             raise RuntimeError("one-second live reference buffer is not ready")
-        return self._sample(reference_end_time - self.delay_s)
+        position, velocity, _ = self._sample(reference_end_time - self.delay_s)
+        return position, velocity
 
 
 class X2SonicOnnxPolicy:

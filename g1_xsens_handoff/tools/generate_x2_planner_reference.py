@@ -61,6 +61,7 @@ def main() -> None:
         np.asarray(motion["root_rot"][:4]),
         np.asarray(motion["dof"][:4]),
     )
+    xsens_upper_origin = context[0, 19:].copy()
     planner = X2KinematicPlanner(args.planner)
     xsens = load_xsens_upper_body(args.xsens_csv) if args.xsens_csv else None
     required = int(np.ceil(args.seconds * 30.0))
@@ -83,6 +84,13 @@ def main() -> None:
         chunks.append(prediction)
         context = prediction[-4:]
     qpos = np.concatenate(chunks)[:required]
+    if xsens is not None:
+        xsens_trajectory, xsens_dt = xsens
+        indices = np.minimum(
+            (np.arange(required, dtype=np.float64) / 30.0 / xsens_dt).astype(int),
+            len(xsens_trajectory) - 1,
+        )
+        qpos[:, 19:] = xsens_upper_origin[None, :] + xsens_trajectory[indices, 12:]
     root_position, root_quaternion, joints = unpack_mujoco_qpos(qpos)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({"x2_planner": {

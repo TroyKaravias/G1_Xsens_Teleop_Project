@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Drive free-base X2 MuJoCo from live Xsens through the X2 SONIC policy."""
+"""Continuously drive free-base X2 MuJoCo from streamed Xsens through SONIC."""
 
 from __future__ import annotations
 
@@ -16,9 +16,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tools.live_xsens_x2 import capture_calibration
+from tools.live_xsens_sonic import relative_pelvis_yaw, unwrap_yaw
 from tools.simulate_xsens_x2_sonic import (
     CONTROL_DT, DECIMATION, SIM_DT, load_model_with_floor,
-    place_x2_feet_on_floor, policy_control_constants, quat_rotate_inverse,
+    policy_control_constants, quat_rotate_inverse,
 )
 from xsens_bridge.live_retarget import OnlineG1Retargeter
 from xsens_bridge.stream import LatestPoseReceiver
@@ -39,6 +40,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", type=Path, required=True)
     parser.add_argument("--policy", type=Path, required=True)
+    parser.add_argument("--seed-motion", type=Path, required=True)
     parser.add_argument("--variant", choices=("v1.3",), default="v1.3")
     parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9764)
@@ -49,11 +51,23 @@ def main() -> None:
     parser.add_argument("--reference-delay", type=float, default=1.0)
     parser.add_argument("--runtime-seconds", type=float, default=0.0)
     parser.add_argument("--viewer", action="store_true")
+    parser.add_argument(
+        "--track-xsens-legs", action=argparse.BooleanOptionalAction, default=False,
+        help="apply calibrated Xsens leg deltas around SONIC's stable idle legs",
+    )
     args = parser.parse_args()
     if args.reference_delay < 1.0:
         parser.error("--reference-delay must be at least 1.0 second")
 
     import mujoco
+    import joblib
+
+    seed_library = joblib.load(args.seed_motion)
+    idle = next(iter(seed_library.values()))
+    idle_joints = np.asarray(idle["dof"], dtype=np.float32)
+    idle_root_position = np.asarray(idle["root_trans_offset"], dtype=np.float64)
+    idle_root_quaternion_xyzw = np.asarray(idle["root_rot"], dtype=np.float64)
+    idle_fps = float(idle["fps"])
 
     stale_s = args.stale_ms / 1000.0
     with LatestPoseReceiver(args.bind, args.port, counter_reset_after_seconds=stale_s) as receiver:
@@ -85,6 +99,9 @@ def main() -> None:
         kp, kd, action_scale, default = policy_control_constants()
 
         origin_x2 = None
+        stream_motion_started = None
+        previous_wrapped_yaw = None
+        target_yaw = 0.0
         last_counter = None
         last_packet_at = None
         last_reference_end = None
@@ -109,11 +126,33 @@ def main() -> None:
                     direct_x2 = g1_deltas_to_x2(pose.dof_pos[None])[0]
                     if origin_x2 is None:
                         origin_x2 = direct_x2.copy()
-                    position = default + (direct_x2 - origin_x2)
+                        stream_motion_started = latest.received_at
+                    idle_index = int(
+                        (latest.received_at - stream_motion_started) * idle_fps
+                    ) % len(idle_joints)
+                    # Continuous stationary reference: validated idle owns the
+                    # root/legs; every received Xsens frame owns waist/arms/head.
+                    position = idle_joints[idle_index].copy()
+                    position[12:] = direct_x2[12:]
+                    if args.track_xsens_legs:
+                        position[:12] += direct_x2[:12] - origin_x2[:12]
                     position, _ = clamp_x2_trajectory(position[None], limits)
                     velocity = g1_velocities_to_x2(pose.dof_vel)
+                    if not args.track_xsens_legs:
+                        velocity[:12] = 0.0
+                    pelvis_segment = next(
+                        segment for segment in latest.frame.segments
+                        if segment.name == "pelvis"
+                    )
+                    wrapped_yaw = relative_pelvis_yaw(
+                        calibration.quaternions["pelvis"],
+                        np.asarray(pelvis_segment.quaternion_wxyz),
+                    )
+                    previous_wrapped_yaw, target_yaw = unwrap_yaw(
+                        wrapped_yaw, previous_wrapped_yaw, target_yaw,
+                    )
                     reference.push(X2SonicReferenceFrame(
-                        latest.received_at, position[0], velocity,
+                        latest.received_at, position[0], velocity, target_yaw,
                     ))
                     last_packet_at = latest.received_at
                     last_reference_end = latest.received_at
@@ -129,9 +168,12 @@ def main() -> None:
                         continue
                     initial_pos, initial_vel = reference.delayed_current(last_reference_end)
                     mujoco.mj_resetData(model, data)
+                    data.qpos[:3] = idle_root_position[0]
+                    q = idle_root_quaternion_xyzw[0]
+                    data.qpos[3:7] = (q[3], q[0], q[1], q[2])
                     data.qpos[qpos_adr] = initial_pos
                     data.qvel[dof_adr] = initial_vel
-                    place_x2_feet_on_floor(mujoco, model, data)
+                    mujoco.mj_forward(model, data)
                     initialized = True
                     started = now
                     next_policy = now
@@ -139,6 +181,11 @@ def main() -> None:
                     if args.viewer:
                         import mujoco.viewer
                         viewer = mujoco.viewer.launch_passive(model, data)
+                        viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+                        viewer.cam.lookat[:] = (0.0, 0.0, 0.65)
+                        viewer.cam.distance = 5.0
+                        viewer.cam.azimuth = 135.0
+                        viewer.cam.elevation = -28.0
 
                 if now < next_policy:
                     time.sleep(min(.002, next_policy - now))
@@ -152,6 +199,10 @@ def main() -> None:
                 qpos_mj = data.qpos[qpos_adr].copy()
                 qvel_mj = data.qvel[dof_adr].copy()
                 base_quat = data.qpos[3:7].copy()
+                current_yaw = float(np.arctan2(
+                    2.0 * (base_quat[0] * base_quat[3] + base_quat[1] * base_quat[2]),
+                    1.0 - 2.0 * (base_quat[2] ** 2 + base_quat[3] ** 2),
+                ))
                 gravity = quat_rotate_inverse(base_quat, np.asarray([0., 0., -1.]))
                 history.append(
                     data.qvel[3:6],
@@ -160,13 +211,16 @@ def main() -> None:
                     last_action_mj[IL_TO_MJ_DOF],
                     gravity,
                 )
-                tokenizer = reference.tokenizer(last_reference_end)
+                tokenizer = reference.tokenizer(last_reference_end, current_yaw)
                 try:
                     action_il = policy.infer(tokenizer, history.flattened())
                 except RuntimeError as exc:
                     fall_reason = str(exc)
                     break
+                action_il = np.clip(action_il, -20.0, 20.0)
                 action_mj = action_il[MJ_TO_IL_DOF]
+                # Published frozen-G1-core v2 runtime requirement.
+                action_mj[[19, 20, 21, 26, 27, 28]] = 0.0
                 target = default + action_mj * action_scale
                 for _ in range(DECIMATION):
                     raw = kp * (target - data.qpos[qpos_adr]) - kd * data.qvel[dof_adr]

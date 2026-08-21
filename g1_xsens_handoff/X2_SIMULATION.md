@@ -334,3 +334,72 @@ upper-body joints (lower-body mean difference 0.033 rad), confirming that the
 planner responded while retaining locomotion ownership. This validates an
 offline Xsens-to-planner dynamic simulation only; live UDP remains next and no
 X2 hardware behavior was tested.
+
+### MVN playback/live capture through planner and v2 SONIC
+
+Both MVN recording playback and the live suit emit the same MXTP02 stream, so
+the capture path is shared:
+
+```bash
+PYTHONPATH=../external/x2_python_deps:. \
+python tools/capture_xsens_x2_planner_sonic.py \
+  --bind 0.0.0.0 --port 9764 --capture-seconds 0 --viewer
+```
+
+Start MVN playback (or begin live streaming) to this workstation while the
+command waits. It performs the unchanged 9-second N/T and 3-second
+arms-forward calibration. `--capture-seconds 0` captures until playback ends;
+use `--motion-start-delay N` to skip a post-calibration lead-in. It then
+injects waist/arm/head deltas into the matching X2 planner, writes
+`data/x2_planner_xsens_live.pkl`, and launches the validated v2 SONIC/free-base
+viewer. By default it opens a kinematic reference window first; confirm the
+expected motion there and close it to start the SONIC physics window. On
+2026-08-21 a localhost `.xudp` replay captured 401 motion frames,
+generated 4.93 seconds of planned X2 reference, and completed its 4.92-second
+dynamic rollout without a fall. This is capture-then-plan simulation, not yet
+continuous real-time replanning or hardware validation.
+
+The initial version allowed the planner's mode-0 gesture template to overwrite
+most Xsens intent, producing an unrelated salute. The corrected ownership is:
+planner root + 12 lower-body joints, Xsens waist/arms/head on every reference
+frame, and v2 SONIC for physics control. A corrected 10.02-second CSV rollout
+and a fresh 4.92-second UDP-capture rollout both completed without a fall.
+These were headless dynamic tests; visually confirm motion correspondence in
+the viewer. The six wrist actions remain frozen as required by the published
+v2 runtime, so wrist-specific Xsens motion is not expected to track yet.
+### Stationary Xsens response through v2 SONIC
+
+The operator-selected default is stationary response, not generated planner
+behavior. `capture_xsens_x2_planner_sonic.py --stationary` (the default) holds
+world XY and uses the validated idle root/leg reference, places absolute
+calibrated Xsens waist/arm/head poses into every frame, and uses v2 SONIC for
+dynamic control. It does not let the planner invent salutes, walking, or other
+gestures. A 10.04-second stationary composite completed without falling with
+joint MAE 0.0986 rad and pelvis-z MAE 0.005 m. Use `--no-stationary` only for
+explicit experimental planner locomotion. This is simulation validation only.
+
+### Continuous MVN playback through v2 SONIC
+
+For playback that must move MuJoCo while MVN is still streaming, use
+`tools/live_xsens_x2_sonic.py`, not the capture tool. It performs calibration,
+buffers one second of already-received frames for SONIC's future horizon, and
+runs v2 SONIC/free-base MuJoCo continuously at 50 Hz. The validated idle RSI
+owns the stable baseline; streamed waist/arms/head always update. Add
+`--track-xsens-legs` for a walking recording so calibrated leg deltas are
+applied around the stable idle legs.
+
+Localhost continuous tests completed 427 upper-body policy steps and 400
+full-body policy steps without a fall, torque saturation, missing frame, or
+malformed packet. They validate headless continuous dynamics only; visually
+confirm the new walking/sign clip and do not infer X2 hardware behavior.
+
+The continuous runner passes calibrated, unwrapped pelvis yaw to SONIC as a
+root-orientation target relative to the simulated robot's current heading. Its
+viewer uses a fixed world camera, so translation and turning remain visible on
+the plane rather than being hidden by a robot-following camera. This remains a
+policy-controlled simulation: Xsens supplies the future reference, the runner
+builds SONIC's 680-value tokenizer and 990-value proprioceptive history, the v2
+ONNX model produces 31 actions at 50 Hz, and PD torques drive the free-base X2.
+It is not direct MuJoCo `qpos` replay. A focused unit test verifies the yaw
+target's row-major 6D rotation layout; visually validating the operator's MVN
+turns is still required.

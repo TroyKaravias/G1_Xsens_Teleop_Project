@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from xsens_bridge.x2_planner import pack_mujoco_qpos, unpack_mujoco_qpos
+from xsens_bridge.x2_planner import clamp_planner_joints, pack_mujoco_qpos, unpack_mujoco_qpos
 
 
 def test_planner_qpos_round_trip_converts_quaternion_order():
@@ -20,3 +20,13 @@ def test_planner_qpos_round_trip_converts_quaternion_order():
 def test_planner_qpos_rejects_wrong_joint_width():
     with pytest.raises(ValueError, match="31 X2 joints"):
         pack_mujoco_qpos(np.zeros((4, 3)), np.zeros((4, 4)), np.zeros((4, 30)))
+
+
+def test_clamp_planner_joints_preserves_root_and_limits_joints():
+    qpos = np.zeros((2, 38), dtype=np.float32)
+    qpos[:, :7] = np.arange(7)
+    qpos[:, 7:] = 2.0
+    clamped, count = clamp_planner_joints(qpos, np.tile([-1.0, 1.0], (31, 1)))
+    np.testing.assert_array_equal(clamped[:, :7], qpos[:, :7])
+    np.testing.assert_array_equal(clamped[:, 7:], 1.0)
+    assert count == 62
